@@ -1,7 +1,6 @@
 ﻿using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -17,7 +16,9 @@ namespace LocresReader
                 var length = br.ReadInt32();
                 if (length > 0)
                 {
-                    return Encoding.ASCII.GetString(br.ReadBytes(length)).TrimEnd('\0');
+                    var result = Encoding.ASCII.GetString(br.ReadBytes(length)).TrimEnd('\0');
+                    br.ReadBytes(4);
+                    return result;
                 }
                 else if (length == 0)
                 {
@@ -26,13 +27,18 @@ namespace LocresReader
                 else
                 {
                     var data = br.ReadBytes((-1 - length) * 2);
-                    br.ReadBytes(2); // Null terminated string I guess?
+                    var result = br.ReadBytes(4);
+                    br.ReadBytes(2);
                     return Encoding.Unicode.GetString(data);
                 }
             }
             var reader = new BinaryReader(new MemoryStream(File.ReadAllBytes(args[0])));
             var MagicNumber = reader.ReadBytes(16);
             var VersionNumber = reader.ReadByte();
+            if (VersionNumber != 2)
+            {
+                Console.WriteLine("Version not match. Try history version of this tool https://github.com/sgkoishi/LocresReader");
+            }
             var LocalizedStringArrayOffset = reader.ReadInt64();
             var CurrentFileOffset = reader.BaseStream.Position;
             reader.BaseStream.Position = LocalizedStringArrayOffset;
@@ -43,10 +49,32 @@ namespace LocresReader
                 LocalizedStringArray[i] = readString(reader);
             }
             reader.BaseStream.Position = CurrentFileOffset;
+
+            string readStringComplex(BinaryReader br)
+            {
+                if (VersionNumber == 2)
+                {
+                    var _hash = br.ReadUInt32();
+                    var savenum = br.ReadInt32();
+                    if (savenum < 0)
+                    {
+                        var data = br.ReadBytes(-savenum * 2);
+                        return Encoding.Unicode.GetString(data).Trim('\0');
+                    }
+                    else
+                    {
+                        var data = br.ReadBytes(savenum);
+                        return Encoding.ASCII.GetString(data).Trim('\0');
+                    }
+                }
+                return "";
+            }
+            var EntriesCount = reader.ReadUInt32();
             var NamespaceCount = reader.ReadUInt32();
             for (var i = 0; i < NamespaceCount; i++)
             {
-                var Namespace = readString(reader);
+                var Namespace = readStringComplex(reader);
+
                 if (!dict.ContainsKey(Namespace))
                 {
                     dict[Namespace] = new SortedDictionary<string, string>();
@@ -54,8 +82,8 @@ namespace LocresReader
                 var KeyCount = reader.ReadInt32();
                 for (var j = 0; j < KeyCount; j++)
                 {
-                    var Key = readString(reader);
-                    var _SourceStringHash = BitConverter.ToString(reader.ReadBytes(4)).Replace("-", ""); // String after CRC slice by 8
+                    var Key = readStringComplex(reader);
+                    var _SourceStringHash = reader.ReadUInt32();
                     var LocalizedStringIndex = reader.ReadInt32();
                     dict[Namespace][Key] = LocalizedStringArray[LocalizedStringIndex];
                 }
